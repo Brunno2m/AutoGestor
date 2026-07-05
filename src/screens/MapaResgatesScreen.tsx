@@ -1,15 +1,14 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, StyleSheet, Text, Pressable, Animated, Easing } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import { View, StyleSheet, Text, Pressable, Animated, Easing, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { Servico } from '../types';
+import { WebView } from 'react-native-webview';
 
 export default function MapaResgatesScreen() {
   const [servicos, setServicos] = useState<Servico[]>([]);
-  const [localAtual, setLocalAtual] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [mapaCarregado, setMapaCarregado] = useState(false);
   const intro = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -28,16 +27,7 @@ export default function MapaResgatesScreen() {
       if (dados) {
         setServicos(JSON.parse(dados));
       }
-
-      // 2. Pede permissão e busca o local atual do dispositivo para centralizar o mapa
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        setLocalAtual({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        });
-      }
+      setMapaCarregado(false);
     } catch (error) {
       console.error('Erro ao carregar mapa:', error);
     }
@@ -49,13 +39,58 @@ export default function MapaResgatesScreen() {
     }, [])
   );
 
-  // Define a região inicial. Se não tiver o GPS, centraliza em um ponto genérico (Brasil)
-  const initialRegion = {
-    latitude: localAtual?.latitude || -15.793889,
-    longitude: localAtual?.longitude || -47.882778,
-    latitudeDelta: localAtual ? 0.05 : 30, // Zoom mais próximo se tiver a localização
-    longitudeDelta: localAtual ? 0.05 : 30,
-  };
+  // Define uma região inicial fixa para evitar dependência de GPS na abertura da aba
+  const markers = servicos
+    .filter(
+      (servico) =>
+        servico.localizacaoResgate &&
+        Number.isFinite(servico.localizacaoResgate.latitude) &&
+        Number.isFinite(servico.localizacaoResgate.longitude)
+    )
+    .map((servico) => ({
+      id: servico.id,
+      latitude: servico.localizacaoResgate!.latitude,
+      longitude: servico.localizacaoResgate!.longitude,
+      title: `Veículo: ${servico.veiculoPlaca}`,
+      description: servico.descricaoProblema,
+    }));
+
+  const mapaHtml = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <style>
+          html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #e2e8f0; }
+          .leaflet-popup-content { font-family: Arial, sans-serif; margin: 12px; }
+        </style>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      </head>
+      <body>
+        <div id="map"></div>
+        <script>
+          const markers = ${JSON.stringify(markers)};
+          const map = L.map('map', { zoomControl: true }).setView([-15.793889, -47.882778], 4);
+
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+          }).addTo(map);
+
+          if (markers.length > 0) {
+            const bounds = [];
+            markers.forEach((marker) => {
+              const leafMarker = L.marker([marker.latitude, marker.longitude]).addTo(map);
+              leafMarker.bindPopup('<b>' + marker.title + '</b><br />' + (marker.description || 'Sem descrição'));
+              bounds.push([marker.latitude, marker.longitude]);
+            });
+            map.fitBounds(bounds, { padding: [32, 32] });
+          }
+        </script>
+      </body>
+    </html>
+  `;
 
   return (
     <View style={styles.container}>
@@ -76,25 +111,22 @@ export default function MapaResgatesScreen() {
         </View>
       </Animated.View>
 
-      <MapView style={styles.map} initialRegion={initialRegion} showsUserLocation={true}>
-        {servicos.map((servico) => {
-          if (servico.localizacaoResgate) {
-            return (
-              <Marker
-                key={servico.id}
-                coordinate={{
-                  latitude: servico.localizacaoResgate.latitude,
-                  longitude: servico.localizacaoResgate.longitude,
-                }}
-                title={`Veículo: ${servico.veiculoPlaca}`}
-                description={servico.descricaoProblema}
-                pinColor="#ef4444" // Cor vermelha para destacar
-              />
-            );
-          }
-          return null;
-        })}
-      </MapView>
+      <View style={styles.mapContainer}>
+        {!mapaCarregado && (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color="#a16207" />
+            <Text style={styles.loadingText}>Carregando mapa...</Text>
+          </View>
+        )}
+        <WebView
+          source={{ html: mapaHtml }}
+          style={styles.map}
+          originWhitelist={['*']}
+          javaScriptEnabled
+          domStorageEnabled
+          onLoadEnd={() => setMapaCarregado(true)}
+        />
+      </View>
     </View>
   );
 }
@@ -135,5 +167,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  mapContainer: { flex: 1 },
   map: { width: '100%', height: '100%' },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2e8f0',
+  },
+  loadingText: {
+    marginTop: 12,
+    color: '#334155',
+    fontSize: 15,
+    fontWeight: '700',
+  },
 });
