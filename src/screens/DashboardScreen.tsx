@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, FlatList, StyleSheet, Text, Pressable, Modal, ScrollView, Image, Animated, Easing } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import CardServico from '../components/CardServico';
 import { obterServicos } from '../services/storage';
@@ -33,6 +34,29 @@ export default function DashboardScreen() {
     }).start();
   }, [intro]);
 
+  // Função para atualizar o status no banco de dados
+  const marcarComoConcluido = async () => {
+    if (!servicoSelecionado) return;
+
+    try {
+      const dados = await AsyncStorage.getItem('@autogestor_servicos');
+      if (dados) {
+        let servicosAtuais: Servico[] = JSON.parse(dados);
+        const index = servicosAtuais.findIndex((s) => s.id === servicoSelecionado.id);
+        
+        if (index !== -1) {
+          servicosAtuais[index].status = 'Concluido';
+          await AsyncStorage.setItem('@autogestor_servicos', JSON.stringify(servicosAtuais));
+          
+          setServicoSelecionado(null); // Fecha o modal
+          carregarServicos(); // Recarrega a lista com o novo status
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar serviço:', error);
+    }
+  };
+
   const pendentes = servicos.filter((servico) => servico.status === 'Pendente').length;
   const emAndamento = servicos.filter((servico) => servico.status === 'Em Andamento').length;
   const concluidos = servicos.filter((servico) => servico.status === 'Concluido').length;
@@ -40,12 +64,14 @@ export default function DashboardScreen() {
   const Header = () => (
     <Animated.View style={[styles.headerBlock, { opacity: intro, transform: [{ translateY: intro.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }]}>
       <View style={styles.heroCard}>
-        <View style={styles.heroIconWrap}>
-          <Ionicons name="speedometer-outline" size={30} color="#a16207" />
-        </View>
+        {/* NOVO BOTÃO: Abre o Menu Lateral (Drawer) */}
+        <Pressable style={styles.menuButton} onPress={() => navigation.openDrawer()}>
+          <Ionicons name="menu-outline" size={24} color="#fff" />
+        </Pressable>
+
         <View style={styles.heroTextWrap}>
           <Text style={styles.heroTitle}>Painel operacional</Text>
-          <Text style={styles.heroSubtitle}>Visão rápida dos serviços e do fluxo da oficina.</Text>
+          <Text style={styles.heroSubtitle}>Visão rápida dos serviços e fluxo.</Text>
         </View>
         <Pressable style={styles.refreshButton} onPress={carregarServicos}>
           <Ionicons name="refresh-outline" size={18} color="#fff" />
@@ -137,6 +163,17 @@ export default function DashboardScreen() {
                 </View>
               ) : null}
 
+              {/* NOVO BOTÃO: Marcar como Concluído */}
+              {servicoSelecionado.status !== 'Concluido' && (
+                <Pressable
+                  style={[styles.modalAction, { backgroundColor: '#166534', marginBottom: 10 }]}
+                  onPress={marcarComoConcluido}
+                >
+                  <Ionicons name="checkmark-done-outline" size={18} color="#fff" />
+                  <Text style={styles.modalActionText}>Marcar como Concluído</Text>
+                </Pressable>
+              )}
+
               <Pressable
                 style={styles.modalAction}
                 onPress={() => {
@@ -198,17 +235,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 18,
   },
-  heroIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: '#fef3c7',
+  menuButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
   },
   heroTextWrap: { flex: 1 },
-  heroTitle: { color: '#fff', fontSize: 20, fontWeight: '800' },
-  heroSubtitle: { color: '#cbd5e1', marginTop: 4, lineHeight: 20 },
+  heroTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  heroSubtitle: { color: '#cbd5e1', marginTop: 2, fontSize: 13, lineHeight: 18 },
   refreshButton: {
     width: 42,
     height: 42,
